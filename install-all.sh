@@ -132,15 +132,42 @@ fi
 echo ""
 echo ">>> 7. Creando cluster Kind..."
 
-if kind get clusters 2>/dev/null | grep -q "kind"; then
-    log "Cluster Kind ya existe"
+if [ -n "$(kind get clusters 2>/dev/null)" ]; then
+    log "Cluster Kind ya existe: $(kind get clusters | head -n1)"
 else
     kind create cluster --name devops-lab --wait 120s
     log "Cluster Kind creado: devops-lab"
 fi
 
+CLUSTER_NAME=$(kind get clusters | head -n1)
+
 # Verificar que kubectl funciona
-kubectl cluster-info --context kind-devops-lab
+kubectl cluster-info --context "kind-${CLUSTER_NAME}"
+
+# ==========================================
+# 7.5 INTEGRAR JENKINS CON DOCKER / KUBECTL / GIT
+# ==========================================
+echo ""
+echo ">>> 7.5 Configurando el usuario jenkins..."
+
+if id jenkins &> /dev/null; then
+    # Jenkins necesita acceso a docker para construir imágenes
+    sudo usermod -aG docker jenkins
+
+    # Jenkins necesita el kubeconfig del cluster kind
+    sudo mkdir -p /var/lib/jenkins/.kube
+    kind get kubeconfig --name "${CLUSTER_NAME}" | sudo tee /var/lib/jenkins/.kube/config > /dev/null
+    sudo chown -R jenkins:jenkins /var/lib/jenkins/.kube
+    sudo chmod 600 /var/lib/jenkins/.kube/config
+
+    # Git rechaza repos de otros usuarios ("dubious ownership") sin esto
+    sudo -u jenkins git config --global --add safe.directory '*'
+
+    sudo systemctl restart jenkins
+    log "Usuario jenkins configurado (docker + kubeconfig + git safe.directory)"
+else
+    warn "Usuario jenkins no existe todavía; reejecuta este paso despues de instalar Jenkins"
+fi
 
 # ==========================================
 # 8. INSTALAR GRAFANA Y PROMETHEUS
@@ -216,14 +243,14 @@ echo ""
 echo "Servicios disponibles:"
 echo ""
 echo "  Jenkins:        http://localhost:8080"
-echo "  Frontend:       http://localhost:8080 (despues del pipeline)"
-echo "  Backend API:    http://localhost:3000"
-echo "  Grafana:        http://localhost:30080 (admin/admin)"
-echo "  Prometheus:     http://localhost:30090"
+echo "  Frontend:       http://localhost:8081 (despues del pipeline)"
+echo "  Backend API:    http://localhost:3000  (health: /health, version: /version, metricas: /metrics)"
+echo "  Grafana:        http://localhost:3001 (admin/admin, con port-forward)"
+echo "  Prometheus:     http://localhost:9090 (con port-forward)"
 echo ""
 echo "Para ejecutar los port-forwards de monitoreo:"
-echo "  kubectl port-forward -n monitoring svc/prometheus-grafana 30080:80 &"
-echo "  kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 30090:9090 &"
+echo "  kubectl port-forward -n monitoring svc/prometheus-grafana 3001:80 &"
+echo "  kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090 &"
 echo ""
 echo "Para ejecutar el pipeline desde Jenkins:"
 echo "  1. Abre http://localhost:8080"

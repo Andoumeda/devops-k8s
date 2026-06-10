@@ -2,7 +2,12 @@
  * setup-jobs.groovy
  *
  * Ejecutar en: Manage Jenkins -> Script Console
- * Crea 3 jobs de pipeline apuntando a un repo Git local.
+ * Crea 3 jobs de pipeline "from SCM" apuntando al repo Git local.
+ *
+ * Requisitos previos (una sola vez, en una terminal):
+ *   sudo usermod -aG docker jenkins
+ *   sudo -u jenkins git config --global --add safe.directory '*'
+ *   sudo systemctl restart jenkins
  */
 
 import jenkins.model.*
@@ -19,7 +24,7 @@ import java.util.Collections
 def jenkinsInstance = Jenkins.instance
 
 // ============================================================
-// 1. CREAR CREDENCIALES DOCKER HUB
+// 1. CREAR CREDENCIALES DOCKER HUB (vacías, completar en la UI)
 // ============================================================
 def credentialsDomain = Domain.global()
 def credentialsStore = jenkinsInstance.getExtensionList(
@@ -49,14 +54,12 @@ if (!existingCredentials) {
 // ============================================================
 // 2. CONFIGURAR REPO GIT LOCAL
 // ============================================================
+// OJO: la rama del repo es "master" (no "main").
 def localRepoPath = 'file:///home/rimuru129/Documents/DevOps - Proyecto Kubernetes'
 
-def gitRemoteConfig = new UserRemoteConfig(localRepoPath, null, null, null)
-def gitBranchSpec = new BranchSpec('*/main')
-
 def gitSCM = new GitSCM(
-    [gitRemoteConfig],
-    [gitBranchSpec],
+    [new UserRemoteConfig(localRepoPath, null, null, null)],
+    [new BranchSpec('*/master')],
     null,
     null,
     Collections.emptyList()
@@ -67,15 +70,17 @@ def gitSCM = new GitSCM(
 // ============================================================
 
 def pipelineJobs = [
-    [name: 'deploy-full',    jenkinsfile: 'jenkins/Jenkinsfile.deploy',      desc: 'Deploy completo: Build + Kind + K8s'],
-    [name: 'push-backend',   jenkinsfile: 'jenkins/Jenkinsfile.push-backend',  desc: 'Push imagen backend a Docker Hub'],
-    [name: 'push-frontend',  jenkinsfile: 'jenkins/Jenkinsfile.push-frontend', desc: 'Push imagen frontend a Docker Hub'],
+    [name: 'deploy-full',   jenkinsfile: 'Jenkinsfile',                       desc: 'Pipeline completo: Checkout + Build + Docker + Deploy K8s + Validación'],
+    [name: 'push-backend',  jenkinsfile: 'jenkins/Jenkinsfile.push-backend',  desc: 'Push imagen backend a Docker Hub'],
+    [name: 'push-frontend', jenkinsfile: 'jenkins/Jenkinsfile.push-frontend', desc: 'Push imagen frontend a Docker Hub'],
 ]
 
 pipelineJobs.each { jobDef ->
     def pipelineJob = jenkinsInstance.getItem(jobDef.name)
     if (pipelineJob) {
-        println "[SKIP] Job '${jobDef.name}' ya existe."
+        pipelineJob.definition = new CpsScmFlowDefinition(gitSCM, jobDef.jenkinsfile)
+        pipelineJob.save()
+        println "[OK] Job '${jobDef.name}' ya existía, definición actualizada -> ${jobDef.jenkinsfile}"
     } else {
         pipelineJob = jenkinsInstance.createProject(WorkflowJob, jobDef.name)
         pipelineJob.description = jobDef.desc
@@ -92,13 +97,13 @@ println '=========================================='
 println '  JOBS CREADOS EN JENKINS'
 println '=========================================='
 println ''
-println '  deploy-full   -> Deploy completo (Build + K8s)'
+println '  deploy-full   -> Pipeline completo (botón de deploy manual)'
 println '  push-backend  -> Push backend a Docker Hub'
 println '  push-frontend -> Push frontend a Docker Hub'
 println ''
-println '  Cada job usa "Pipeline from SCM" apuntando al repo local.'
+println '  Cada job usa "Pipeline from SCM" sobre el repo local (rama master).'
+println '  Recordá hacer "git commit" para que los jobs vean los cambios.'
 println '  Haz click en "Build Now" en cada job.'
-println '  Los pipelines de push mostraran un modal de credenciales.'
 println ''
 println '  IMPORTANTE: Configura las credenciales en:'
 println '  Manage Jenkins -> Credentials -> Global'

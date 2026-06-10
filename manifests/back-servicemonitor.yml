@@ -1,0 +1,19 @@
+# ServiceMonitor: le indica a Prometheus (kube-prometheus-stack) que scrapee
+# el endpoint /metrics del backend. Requiere que el stack de monitoreo esté
+# instalado (install-all.sh, paso 8). El label "release: prometheus" es el que
+# usa el operador para descubrir este recurso.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-monitor
+  namespace: devops-lab
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

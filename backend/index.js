@@ -2,10 +2,45 @@ const express = require("express");
 const { Pool } = require("pg");
 const cors = require("cors");
 const swaggerUi = require("swagger-ui-express");
+const promClient = require("prom-client");
+const pkg = require("./package.json");
+
+const APP_NAME = process.env.APP_NAME || pkg.name;
+const APP_VERSION = process.env.APP_VERSION || pkg.version;
+const APP_ENV = process.env.APP_ENV || "development";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+/* Métricas Prometheus */
+const register = new promClient.Registry();
+register.setDefaultLabels({ app: APP_NAME });
+promClient.collectDefaultMetrics({ register });
+
+const httpRequestsTotal = new promClient.Counter({
+    name: "http_requests_total",
+    help: "Cantidad total de requests HTTP",
+    labelNames: ["method", "route", "status"],
+    registers: [register],
+});
+
+const httpRequestDuration = new promClient.Histogram({
+    name: "http_request_duration_seconds",
+    help: "Duración de los requests HTTP en segundos",
+    labelNames: ["method", "route", "status"],
+    registers: [register],
+});
+
+app.use((req, res, next) => {
+    const end = httpRequestDuration.startTimer();
+    res.on("finish", () => {
+        const route = req.route ? req.baseUrl + req.route.path : req.path;
+        httpRequestsTotal.inc({ method: req.method, route, status: res.statusCode });
+        end({ method: req.method, route, status: res.statusCode });
+    });
+    next();
+});
 
 const pool = new Pool({
     host: process.env.DB_HOST,
@@ -55,6 +90,36 @@ const swaggerDocument = {
         },
     },
     paths: {
+        "/health": {
+            get: {
+                summary: "Estado de salud de la aplicación y la base de datos",
+                responses: {
+                    200: {
+                        description: "Estado de la aplicación",
+                        content: {
+                            "application/json": {
+                                example: { status: "ok", db: "up", uptime: 123.4 },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "/version": {
+            get: {
+                summary: "Versión de la aplicación (desde ConfigMap)",
+                responses: {
+                    200: {
+                        description: "Información de versión",
+                        content: {
+                            "application/json": {
+                                example: { app: "todo-backend", version: "1.0.0", environment: "kubernetes" },
+                            },
+                        },
+                    },
+                },
+            },
+        },
         "/tasks": {
             get: {
                 summary: "Obtener todas las tareas",
@@ -159,6 +224,40 @@ const swaggerDocument = {
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
+/* Salud, versión y métricas */
+
+// GET /health - usado por los probes de Kubernetes y la validación del pipeline
+app.get("/health", async (req, res) => {
+    let db = "up";
+    try {
+        await pool.query("SELECT 1");
+    } catch (err) {
+        db = "down";
+    }
+    res.json({
+        status: "ok",
+        db,
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString(),
+    });
+});
+
+// GET /version - APP_NAME/APP_VERSION/APP_ENV vienen del ConfigMap backend-config
+app.get("/version", (req, res) => {
+    res.json({
+        app: APP_NAME,
+        version: APP_VERSION,
+        environment: APP_ENV,
+        node: process.version,
+    });
+});
+
+// GET /metrics - scrapeado por Prometheus (ServiceMonitor backend-monitor)
+app.get("/metrics", async (req, res) => {
+    res.set("Content-Type", register.contentType);
+    res.end(await register.metrics());
+});
+
 /* CRUD */
 
 // GET
@@ -197,4 +296,6 @@ app.delete("/tasks/:id", async (req, res) => {
     res.json({ success: true });
 });
 
-app.listen(3000, () => console.log("Backend corriendo en 3000"));
+app.listen(3000, () =>
+    console.log(`${APP_NAME} v${APP_VERSION} (${APP_ENV}) corriendo en 3000`)
+);

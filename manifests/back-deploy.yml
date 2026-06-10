@@ -19,12 +19,49 @@ spec:
           imagePullPolicy: Never
           ports:
             - containerPort: 3000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
           env:
             - name: DB_HOST
               valueFrom:
                 configMapKeyRef:
                   name: backend-config
                   key: DB_HOST
+
+            - name: APP_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: APP_NAME
+
+            - name: APP_VERSION
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: APP_VERSION
+
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: APP_ENV
 
             - name: DB_NAME
               valueFrom:
