@@ -16,29 +16,29 @@ import hudson.plugins.git.UserRemoteConfig
 import hudson.plugins.git.BranchSpec
 import java.util.Collections
 
-def jenkins = Jenkins.instance
+def jenkinsInstance = Jenkins.instance
 
 // ============================================================
 // 1. CREAR CREDENCIALES DOCKER HUB
 // ============================================================
-def domain = Domain.global()
-def store = jenkins.getExtensionList(
+def credentialsDomain = Domain.global()
+def credentialsStore = jenkinsInstance.getExtensionList(
     'com.cloudbees.plugins.credentials.SystemCredentialsProvider'
 )[0].getStore()
 
-def existing = store.getCredentials(domain).find {
+def existingCredentials = credentialsStore.getCredentials(credentialsDomain).find {
     it.id == 'dockerhub-credentials'
 }
 
-if (!existing) {
-    def creds = new UsernamePasswordCredentialsImpl(
+if (!existingCredentials) {
+    def dockerCreds = new UsernamePasswordCredentialsImpl(
         CredentialsScope.GLOBAL,
         'dockerhub-credentials',
         'Docker Hub credentials',
         '',
         ''
     )
-    store.addCredentials(domain, creds)
+    credentialsStore.addCredentials(credentialsDomain, dockerCreds)
     println '[OK] Credenciales "dockerhub-credentials" creadas.'
     println '     Ve a: Manage Jenkins -> Credentials -> Global -> dockerhub-credentials'
     println '     y completa usuario + password/token de Docker Hub.'
@@ -49,14 +49,14 @@ if (!existing) {
 // ============================================================
 // 2. CONFIGURAR REPO GIT LOCAL
 // ============================================================
-def repoPath = 'file:///home/rimuru129/Documents/DevOps - Proyecto Kubernetes'
+def localRepoPath = 'file:///home/rimuru129/Documents/DevOps - Proyecto Kubernetes'
 
-def userRemoteConfig = new UserRemoteConfig(repoPath, null, null, null)
-def branchSpec = new BranchSpec('*/main')
+def gitRemoteConfig = new UserRemoteConfig(localRepoPath, null, null, null)
+def gitBranchSpec = new BranchSpec('*/main')
 
-def scm = new GitSCM(
-    [userRemoteConfig],
-    [branchSpec],
+def gitSCM = new GitSCM(
+    [gitRemoteConfig],
+    [gitBranchSpec],
     null,
     null,
     Collections.emptyList()
@@ -66,26 +66,26 @@ def scm = new GitSCM(
 // 3. CREAR LOS 3 JOBS (Pipeline from SCM)
 // ============================================================
 
-def jobs = [
+def pipelineJobs = [
     [name: 'deploy-full',    jenkinsfile: 'jenkins/Jenkinsfile.deploy',      desc: 'Deploy completo: Build + Kind + K8s'],
     [name: 'push-backend',   jenkinsfile: 'jenkins/Jenkinsfile.push-backend',  desc: 'Push imagen backend a Docker Hub'],
     [name: 'push-frontend',  jenkinsfile: 'jenkins/Jenkinsfile.push-frontend', desc: 'Push imagen frontend a Docker Hub'],
 ]
 
-jobs.each { jobDef ->
-    def job = jenkins.getItem(jobDef.name)
-    if (job) {
+pipelineJobs.each { jobDef ->
+    def pipelineJob = jenkinsInstance.getItem(jobDef.name)
+    if (pipelineJob) {
         println "[SKIP] Job '${jobDef.name}' ya existe."
     } else {
-        job = jenkins.createProject(WorkflowJob, jobDef.name)
-        job.description = jobDef.desc
-        job.definition = new CpsScmFlowDefinition(scm, jobDef.jenkinsfile)
-        job.save()
+        pipelineJob = jenkinsInstance.createProject(WorkflowJob, jobDef.name)
+        pipelineJob.description = jobDef.desc
+        pipelineJob.definition = new CpsScmFlowDefinition(gitSCM, jobDef.jenkinsfile)
+        pipelineJob.save()
         println "[OK] Job '${jobDef.name}' creado -> ${jobDef.jenkinsfile}"
     }
 }
 
-jenkins.save()
+jenkinsInstance.save()
 
 println ''
 println '=========================================='
