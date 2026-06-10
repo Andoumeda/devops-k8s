@@ -70,9 +70,10 @@ def gitSCM = new GitSCM(
 // ============================================================
 
 def pipelineJobs = [
-    [name: 'deploy-full',   jenkinsfile: 'Jenkinsfile',                       desc: 'Pipeline completo: Checkout + Build + Docker + Deploy K8s + Validación'],
-    [name: 'push-backend',  jenkinsfile: 'jenkins/Jenkinsfile.push-backend',  desc: 'Push imagen backend a Docker Hub'],
-    [name: 'push-frontend', jenkinsfile: 'jenkins/Jenkinsfile.push-frontend', desc: 'Push imagen frontend a Docker Hub'],
+    [name: 'deploy-full',       jenkinsfile: 'Jenkinsfile',                       desc: 'Pipeline completo: Checkout + Build + Docker + Deploy K8s + Validación'],
+    [name: 'deploy-monitoring', jenkinsfile: 'jenkins/Jenkinsfile.monitoring',    desc: 'Despliega Prometheus + Grafana (kube-prometheus-stack) y levanta los port-forwards'],
+    [name: 'push-backend',      jenkinsfile: 'jenkins/Jenkinsfile.push-backend',  desc: 'Push imagen backend a Docker Hub'],
+    [name: 'push-frontend',     jenkinsfile: 'jenkins/Jenkinsfile.push-frontend', desc: 'Push imagen frontend a Docker Hub'],
 ]
 
 pipelineJobs.each { jobDef ->
@@ -97,9 +98,10 @@ println '=========================================='
 println '  JOBS CREADOS EN JENKINS'
 println '=========================================='
 println ''
-println '  deploy-full   -> Pipeline completo (botón de deploy manual)'
-println '  push-backend  -> Push backend a Docker Hub'
-println '  push-frontend -> Push frontend a Docker Hub'
+println '  deploy-full       -> Pipeline completo (botón de deploy manual)'
+println '  deploy-monitoring -> Prometheus + Grafana + port-forwards'
+println '  push-backend      -> Push backend a Docker Hub'
+println '  push-frontend     -> Push frontend a Docker Hub'
 println ''
 println '  Cada job usa "Pipeline from SCM" sobre el repo local (rama master).'
 println '  Recordá hacer "git commit" para que los jobs vean los cambios.'

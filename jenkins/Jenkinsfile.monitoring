@@ -1,0 +1,114 @@
+pipeline {
+    agent any
+
+    environment {
+        MONITORING_NS = 'monitoring'
+        GRAFANA_PORT = '3001'   // 3000 lo usa el backend
+        PROMETHEUS_PORT = '9090'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Helm Repos') {
+            steps {
+                sh '''
+                    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+                    helm repo update
+                '''
+            }
+        }
+
+        stage('Deploy Prometheus + Grafana') {
+            steps {
+                sh '''
+                    kubectl create namespace ${MONITORING_NS} 2>/dev/null || true
+
+                    helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+                        --namespace ${MONITORING_NS} \
+                        --set grafana.adminPassword=admin \
+                        --wait --timeout 300s
+                '''
+            }
+        }
+
+        stage('Wait for Pods Ready') {
+            steps {
+                sh '''
+                    kubectl rollout status deployment/prometheus-grafana -n ${MONITORING_NS} --timeout=180s
+                    kubectl rollout status deployment/prometheus-kube-prometheus-operator -n ${MONITORING_NS} --timeout=180s
+                    kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n ${MONITORING_NS} --timeout=180s
+                '''
+            }
+        }
+
+        stage('ServiceMonitor de la App') {
+            steps {
+                // Conecta Prometheus con el /metrics del backend (si la app ya está desplegada)
+                sh '''
+                    kubectl apply -f manifests/back-servicemonitor.yml || echo "[WARN] Namespace devops-lab no existe aun: ejecutar primero deploy-full"
+                '''
+            }
+        }
+
+        stage('Port-Forward') {
+            steps {
+                sh '''
+                    kill $(cat /tmp/pf-grafana.pid 2>/dev/null) 2>/dev/null || true
+                    kill $(cat /tmp/pf-prometheus.pid 2>/dev/null) 2>/dev/null || true
+                    sleep 1
+
+                    JENKINS_NODE_COOKIE=dontKillMe nohup kubectl port-forward -n ${MONITORING_NS} svc/prometheus-grafana ${GRAFANA_PORT}:80 > /tmp/pf-grafana.log 2>&1 &
+                    echo $! > /tmp/pf-grafana.pid
+
+                    JENKINS_NODE_COOKIE=dontKillMe nohup kubectl port-forward -n ${MONITORING_NS} svc/prometheus-kube-prometheus-prometheus ${PROMETHEUS_PORT}:9090 > /tmp/pf-prometheus.log 2>&1 &
+                    echo $! > /tmp/pf-prometheus.pid
+
+                    sleep 3
+                '''
+            }
+        }
+
+        stage('Validación') {
+            steps {
+                sh '''
+                    echo "--- Pods de monitoreo ---"
+                    kubectl get pods -n ${MONITORING_NS}
+
+                    echo "--- Prometheus healthy ---"
+                    curl -fsS http://localhost:${PROMETHEUS_PORT}/-/healthy
+
+                    echo "--- Grafana health ---"
+                    curl -fsS http://localhost:${GRAFANA_PORT}/api/health
+
+                    echo ""
+                    echo "--- Target del backend en Prometheus ---"
+                    curl -fsS "http://localhost:${PROMETHEUS_PORT}/api/v1/targets?state=active" | grep -o "backend-monitor" | head -1 \
+                        || echo "[WARN] backend-monitor todavia no aparece como target (la app no esta desplegada o Prometheus aun no recargo)"
+
+                    echo "==========================================="
+                    echo " Grafana:    http://localhost:${GRAFANA_PORT}  (admin/admin)"
+                    echo " Prometheus: http://localhost:${PROMETHEUS_PORT}"
+                    echo "==========================================="
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Stack de monitoreo desplegado y validado.'
+        }
+        failure {
+            echo 'Fallo el despliegue del monitoreo.'
+            sh '''
+                kill $(cat /tmp/pf-grafana.pid 2>/dev/null) 2>/dev/null || true
+                kill $(cat /tmp/pf-prometheus.pid 2>/dev/null) 2>/dev/null || true
+            '''
+        }
+    }
+}

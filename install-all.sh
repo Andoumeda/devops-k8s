@@ -160,11 +160,24 @@ if id jenkins &> /dev/null; then
     sudo chown -R jenkins:jenkins /var/lib/jenkins/.kube
     sudo chmod 600 /var/lib/jenkins/.kube/config
 
-    # Git rechaza repos de otros usuarios ("dubious ownership") sin esto
-    sudo -u jenkins git config --global --add safe.directory '*'
+    # El home del usuario es 750: jenkins necesita permiso de transito (solo x,
+    # no puede listar el contenido) para llegar al repo y clonarlo
+    sudo setfacl -m u:jenkins:x "$HOME"
 
+    # Git rechaza repos de otros usuarios ("dubious ownership") sin esto.
+    # Se ejecuta desde / porque jenkins no puede hacer stat del directorio actual.
+    sudo -u jenkins -H git -C / config --global --add safe.directory '*'
+
+    # El plugin Git de Jenkins bloquea repos file:// por defecto (SECURITY-2478);
+    # se habilita via propiedad de sistema en el servicio systemd
+    sudo mkdir -p /etc/systemd/system/jenkins.service.d
+    sudo tee /etc/systemd/system/jenkins.service.d/override.conf > /dev/null <<'EOF'
+[Service]
+Environment="JAVA_OPTS=-Djava.awt.headless=true -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true"
+EOF
+    sudo systemctl daemon-reload
     sudo systemctl restart jenkins
-    log "Usuario jenkins configurado (docker + kubeconfig + git safe.directory)"
+    log "Usuario jenkins configurado (docker + kubeconfig + acceso al repo + git safe.directory)"
 else
     warn "Usuario jenkins no existe todavía; reejecuta este paso despues de instalar Jenkins"
 fi

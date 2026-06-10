@@ -59,6 +59,7 @@ El backend consume su configuración por **variables de entorno**: las no sensib
 ├── manifests/                # YAML de Kubernetes
 ├── jenkins/
 │   ├── setup-jobs.groovy     # Crea los jobs en Jenkins (Script Console)
+│   ├── Jenkinsfile.monitoring   # Despliega Prometheus + Grafana
 │   ├── Jenkinsfile.push-backend
 │   └── Jenkinsfile.push-frontend
 ├── Jenkinsfile               # Pipeline principal (deploy-full)
@@ -90,6 +91,7 @@ El script instala y configura: Docker, kind, kubectl, Node.js, Jenkins, Helm, cr
 2. Instalar los plugins sugeridos (incluyen Git y Pipeline).
 3. Ir a **Manage Jenkins → Script Console**, pegar el contenido de `jenkins/setup-jobs.groovy` y ejecutar. Esto crea:
    - `deploy-full` — pipeline completo (checkout → build → docker → deploy → validación)
+   - `deploy-monitoring` — despliega Prometheus + Grafana y levanta los port-forwards
    - `push-backend` / `push-frontend` — publicación de imágenes en Docker Hub
 4. (Solo para push) Completar usuario y token en **Manage Jenkins → Credentials → Global → dockerhub-credentials**.
 
@@ -132,12 +134,18 @@ El pipeline `deploy-full` (archivo `Jenkinsfile`) implementa las etapas obligato
 
 ## 5. Monitoreo
 
-### 5.1 Acceso
+### 5.1 Despliegue y acceso
+
+**Opción A (recomendada): desde Jenkins** — job **`deploy-monitoring`** → *Build Now*. Instala/actualiza kube-prometheus-stack con Helm, espera los pods, aplica el ServiceMonitor del backend, levanta los port-forwards y valida que Prometheus y Grafana respondan.
+
+**Opción B: manual**
 
 ```bash
 kubectl port-forward -n monitoring svc/prometheus-grafana 3001:80 &
 kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 9090:9090 &
 ```
+
+En ambos casos:
 
 - **Grafana**: `http://localhost:3001` (usuario `admin`, contraseña `admin`)
 - **Prometheus**: `http://localhost:9090`
@@ -197,6 +205,8 @@ Las capturas para la defensa se guardan en `docs/evidencias/`:
 | El port-forward del frontend fallaba siempre | Conflicto de puertos: Jenkins y el frontend usaban ambos el 8080 | El frontend se publica en el **8081** |
 | `kind load docker-image` no encontraba el cluster | Sin `--name`, kind asume un cluster llamado `kind`, pero el nuestro se llama `devops-lab` | El pipeline detecta el nombre con `kind get clusters` y pasa `--name` |
 | Jenkins no podía clonar el repo local | Git bloquea repos de otros usuarios (*dubious ownership*) | `sudo -u jenkins git config --global --add safe.directory '*'` (lo hace `install-all.sh`) |
+| El usuario `jenkins` no llegaba al repo | El home del usuario es `750`, jenkins no podía atravesarlo | ACL de tránsito: `setfacl -m u:jenkins:x $HOME` (lo hace `install-all.sh`) |
+| Jenkins rechazaba el checkout `file://` | Protección SECURITY-2478 del plugin Git contra repos locales | Propiedad `hudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true` en el systemd override de Jenkins (lo hace `install-all.sh`) |
 | Jenkins no podía usar Docker ni kubectl | El usuario `jenkins` no estaba en el grupo `docker` y no tenía kubeconfig | `install-all.sh` lo agrega al grupo y copia el kubeconfig de kind a `/var/lib/jenkins/.kube/config` |
 | Los pods no tomaban la imagen nueva tras un re-deploy | Con `imagePullPolicy: Never` y el mismo tag, `kubectl apply` no reinicia nada | El pipeline ejecuta `kubectl rollout restart` tras aplicar los manifests |
 | Prometheus no scrapeaba la app | El stack solo descubre ServiceMonitors con el label del release | Se agregó `release: prometheus` al `ServiceMonitor` |
