@@ -1,0 +1,40 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh 'docker build -t rimuru129/todo-backend .'
+            }
+        }
+
+        stage('Docker Login') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh 'echo ${DOCKER_PASS} | docker login -u rimuru129 --password-stdin'
+                }
+            }
+        }
+
+        stage('Push') {
+            steps {
+                sh 'docker push rimuru129/todo-backend'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Imagen backend subida a DockerHub exitosamente.'
+        }
+        failure {
+            echo 'Error al subir la imagen backend.'
+        }
+    }
+}

@@ -1,0 +1,236 @@
+#!/bin/bash
+set -e
+
+echo "=========================================="
+echo "  INSTALADOR PIPELINE DEVOPS KUBERNETES"
+echo "=========================================="
+
+# Colores
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log() { echo -e "${GREEN}[OK]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+err() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+# Verificar si se ejecuta como root
+if [ "$EUID" -ne 0 ]; then
+    warn "Ejecutando con sudo..."
+fi
+
+# ==========================================
+# 1. ACTUALIZAR SISTEMA
+# ==========================================
+echo ""
+echo ">>> 1. Actualizando sistema..."
+sudo apt-get update -qq
+sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common
+
+# ==========================================
+# 2. INSTALAR DOCKER
+# ==========================================
+echo ""
+echo ">>> 2. Instalando Docker..."
+
+if command -v docker &> /dev/null; then
+    log "Docker ya está instalado: $(docker --version)"
+else
+    # Agregar clave GPG de Docker
+    sudo install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+    # Agregar repositorio
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    # Agregar usuario al grupo docker (evitar sudo)
+    sudo usermod -aG docker $USER
+    log "Docker instalado: $(docker --version)"
+    warn "Cierra y abre la sesion para usar docker sin sudo, o ejecuta: newgrp docker"
+fi
+
+# ==========================================
+# 3. INSTALAR KIND (Kubernetes in Docker)
+# ==========================================
+echo ""
+echo ">>> 3. Instalando Kind..."
+
+if command -v kind &> /dev/null; then
+    log "Kind ya está instalado: $(kind version)"
+else
+    curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.23.0/kind-linux-amd64
+    chmod +x ./kind
+    sudo mv ./kind /usr/local/bin/kind
+    log "Kind instalado: $(kind version)"
+fi
+
+# ==========================================
+# 4. INSTALAR KUBECTL
+# ==========================================
+echo ""
+echo ">>> 4. Instalando kubectl..."
+
+if command -v kubectl &> /dev/null; then
+    log "kubectl ya está instalado: $(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+else
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    sudo mv kubectl /usr/local/bin/
+    log "kubectl instalado: $(kubectl version --client)"
+fi
+
+# ==========================================
+# 5. INSTALAR NODE.JS (NPM)
+# ==========================================
+echo ""
+echo ">>> 5. Instalando Node.js..."
+
+if command -v node &> /dev/null; then
+    log "Node.js ya está instalado: $(node --version)"
+else
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y -qq nodejs
+    log "Node.js instalado: $(node --version)"
+fi
+
+# ==========================================
+# 6. INSTALAR JENKINS
+# ==========================================
+echo ""
+echo ">>> 6. Instalando Jenkins..."
+
+if command -v jenkins &> /dev/null; then
+    log "Jenkins ya está instalado"
+else
+    curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+    echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq jenkins
+
+    # Habilitar e iniciar Jenkins
+    sudo systemctl enable jenkins
+    sudo systemctl start jenkins
+
+    log "Jenkins instalado e iniciado"
+    echo ""
+    echo "  Para obtener la clave inicial de Jenkins:"
+    echo "  sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
+    echo ""
+fi
+
+# ==========================================
+# 7. CREAR CLUSTER KIND
+# ==========================================
+echo ""
+echo ">>> 7. Creando cluster Kind..."
+
+if kind get clusters 2>/dev/null | grep -q "kind"; then
+    log "Cluster Kind ya existe"
+else
+    kind create cluster --name devops-lab --wait 120s
+    log "Cluster Kind creado: devops-lab"
+fi
+
+# Verificar que kubectl funciona
+kubectl cluster-info --context kind-devops-lab
+
+# ==========================================
+# 8. INSTALAR GRAFANA Y PROMETHEUS
+# ==========================================
+echo ""
+echo ">>> 8. Instalando Grafana y Prometheus..."
+
+# Crear namespace de monitoreo
+kubectl create namespace monitoring 2>/dev/null || true
+
+# Instalar Prometheus con helm (si no está disponible, instalar helm primero)
+if ! command -v helm &> /dev/null; then
+    echo "Instalando Helm..."
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+fi
+
+# Agregar repositorios de Helm
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+helm repo add grafana https://grafana.github.io/helm-charts 2>/dev/null || true
+helm repo update
+
+# Instalar kube-prometheus-stack (incluye Prometheus + Grafana + AlertManager)
+helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+    --namespace monitoring \
+    --set grafana.adminPassword=admin \
+    --set grafana.service.type=NodePort \
+    --set grafana.service.nodePort=30080 \
+    --set prometheus.service.type=NodePort \
+    --set prometheus.service.nodePort=30090 \
+    --set alertmanager.service.type=NodePort \
+    --set alertmanager.service.nodePort=30093 \
+    --wait --timeout 300s
+
+log "Prometheus y Grafana instalados"
+
+# ==========================================
+# 9. VERIFICAR INSTALACION
+# ==========================================
+echo ""
+echo "=========================================="
+echo "  VERIFICACION DE INSTALACION"
+echo "=========================================="
+
+echo ""
+echo "Herramientas instaladas:"
+docker --version 2>/dev/null && log "Docker OK" || err "Docker NO instalado"
+kind version 2>/dev/null && log "Kind OK" || err "Kind NO instalado"
+kubectl version --client 2>/dev/null && log "kubectl OK" || err "kubectl NO instalado"
+node --version 2>/dev/null && log "Node.js OK" || err "Node.js NO instalado"
+npm --version 2>/dev/null && log "npm OK" || err "npm NO instalado"
+helm version --short 2>/dev/null && log "Helm OK" || err "Helm NO instalado"
+
+echo ""
+echo "Cluster Kind:"
+kind get clusters 2>/dev/null && log "Cluster OK" || warn "No hay clusters Kind"
+
+echo ""
+echo "Pods en namespace devops-lab:"
+kubectl get pods -n devops-lab 2>/dev/null || warn "Namespace devops-lab no existe aún"
+
+echo ""
+echo "Pods de monitoreo:"
+kubectl get pods -n monitoring 2>/dev/null || warn "Namespace monitoring no existe"
+
+# ==========================================
+# 10. PORT-FORWARDS DE MONITOREO
+# ==========================================
+echo ""
+echo "=========================================="
+echo "  INSTALACION COMPLETADA"
+echo "=========================================="
+echo ""
+echo "Servicios disponibles:"
+echo ""
+echo "  Jenkins:        http://localhost:8080"
+echo "  Frontend:       http://localhost:8080 (despues del pipeline)"
+echo "  Backend API:    http://localhost:3000"
+echo "  Grafana:        http://localhost:30080 (admin/admin)"
+echo "  Prometheus:     http://localhost:30090"
+echo ""
+echo "Para ejecutar los port-forwards de monitoreo:"
+echo "  kubectl port-forward -n monitoring svc/prometheus-grafana 30080:80 &"
+echo "  kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-prometheus 30090:9090 &"
+echo ""
+echo "Para ejecutar el pipeline desde Jenkins:"
+echo "  1. Abre http://localhost:8080"
+echo "  2. Obtén la clave inicial: sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
+echo "  3. Configura Jenkins y ejecuta el pipeline"
+echo ""
+echo "Para ejecutar el pipeline manualmente:"
+echo "  cd /home/rimuru129/Documents/DevOps\\ -\\ Proyecto\\ Kubernetes"
+echo "  ./pipeline-build.sh"
+echo ""

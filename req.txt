@@ -1,0 +1,3 @@
+usar grafana y prometeus para monitoreo
+
+utilizar la interfaz grafica de jenkins para ejecutar los pipelines

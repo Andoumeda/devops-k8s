@@ -1,0 +1,54 @@
+pipeline {
+    agent any
+
+    parameters {
+        credentials(
+            credentialType: 'com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl',
+            defaultValue: 'dockerhub-credentials',
+            description: 'Credenciales de Docker Hub para hacer push de la imagen',
+            name: 'DOCKER_CREDENTIALS'
+        )
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                sh 'docker build -t todo-frontend ./frontend'
+            }
+        }
+
+        stage('Docker Login & Push') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: "${params.DOCKER_CREDENTIALS}",
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
+                        docker tag todo-frontend ${DOCKER_USER}/todo-frontend:latest
+                        docker push ${DOCKER_USER}/todo-frontend:latest
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Imagen frontend subida a DockerHub exitosamente.'
+        }
+        failure {
+            echo 'Error al subir la imagen frontend.'
+        }
+        always {
+            sh 'docker logout 2>/dev/null || true'
+        }
+    }
+}
