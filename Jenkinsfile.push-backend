@@ -1,0 +1,26 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKERHUB_CREDENTIALS = 'dockerhub-creds'
+        IMAGE_NAME = 'andoumeda/todo-backend'
+    }
+
+    stages {
+        stage('Tag Image') {
+            steps {
+                sh "docker tag todo-backend:latest ${IMAGE_NAME}:latest"
+            }
+        }
+        
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', DOCKERHUB_CREDENTIALS) {
+                        docker.image("${IMAGE_NAME}:latest").push()
+                    }
+                }
+            }
+        }
+    }
+}
