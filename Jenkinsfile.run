@@ -1,0 +1,32 @@
+pipeline {
+    agent any
+  
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+    
+        stage('Apply Kubernetes manifests') {
+            steps {
+                sh 'kubectl apply -f manifests/'
+            }
+        }
+    
+        stage('Wait for pods') {
+            steps {
+                sh 'kubectl wait --for=condition=available --timeout=120s deployment --all'
+            }
+        }
+    
+        stage('Port forwarding') {
+            steps {
+                sh '''
+                nohup kubectl port-forward svc/frontend 8080:80 &
+                nohup kubectl port-forward svc/backend 3000:3000 &
+                '''
+            }
+        }
+    }
+}
