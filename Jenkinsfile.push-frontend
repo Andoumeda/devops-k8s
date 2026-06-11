@@ -4,12 +4,21 @@ pipeline {
     environment {
         DOCKERHUB_CREDENTIALS = 'dockerhub-creds'
         IMAGE_NAME = 'andoumeda/todo-frontend'
+        IMAGE_TAG = "latest"
     }
 
     stages {
-        stage('Tag Image') {
+        stage('Checkout') {
             steps {
-                sh "docker tag todo-frontend:latest ${IMAGE_NAME}:latest"
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                dir('frontend') {
+                    sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG .'
+                }
             }
         }
         
