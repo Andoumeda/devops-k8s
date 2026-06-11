@@ -55,7 +55,15 @@ if (!existingCredentials) {
 // 2. CONFIGURAR REPO GIT LOCAL
 // ============================================================
 // OJO: la rama del repo es "master" (no "main").
-def localRepoPath = 'file:///home/rimuru129/Documents/DevOps - Proyecto Kubernetes'
+def repoPathFile = new File('/var/lib/jenkins/repo-path')
+if (!repoPathFile.exists()) {
+    println '[ERROR] No se encontró /var/lib/jenkins/repo-path'
+    println '        Ejecutá primero install-all.sh para generar este archivo.'
+    return
+}
+def repoDir = repoPathFile.text.trim()
+def localRepoPath = "file://${repoDir}"
+println "[INFO] Ruta del repositorio: ${localRepoPath}"
 
 def gitSCM = new GitSCM(
     [new UserRemoteConfig(localRepoPath, null, null, null)],

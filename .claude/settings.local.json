@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(kind get *)",
+      "Bash(kubectl config *)",
+      "Bash(kubectl get *)",
+      "Bash(command -v docker kind kubectl helm node npm)",
+      "Bash(systemctl is-active *)",
+      "Bash(git rm *)",
+      "Bash(rm jenkins/Jenkinsfile.deploy)",
+      "Bash(node --check backend/index.js)",
+      "Bash(bash -n install-all.sh)",
+      "Bash(python3 -c ' *)",
+      "Bash(npm install *)",
+      "Bash(APP_VERSION=2.0.0-test APP_ENV=smoke-test node index.js)",
+      "Bash(curl -fsS http://localhost:3000/health)",
+      "Bash(curl -fsS http://localhost:3000/version)",
+      "Bash(curl -fsS http://localhost:3000/metrics)",
+      "Bash(kill %1)",
+      "Read(//tmp/**)",
+      "Read(//home/rimuru129/**)",
+      "Bash(command -v setfacl)",
+      "Read(//etc/systemd/system/jenkins.service.d/**)",
+      "Bash(systemctl --no-pager show jenkins -p Environment)"
+    ]
+  }
+}

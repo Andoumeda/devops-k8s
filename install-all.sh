@@ -15,6 +15,37 @@ log() { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 err() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+# ==========================================
+# DETECCIÓN DE DISTRIBUCIÓN
+# ==========================================
+detect_distro() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        DISTRO_ID="$ID"
+        DISTRO_LIKE="${ID_LIKE:-$ID}"
+    else
+        DISTRO_ID="unknown"
+        DISTRO_LIKE="unknown"
+    fi
+
+    case "$DISTRO_LIKE" in
+        *arch*|*garuda*|*manjaro*|*endeavour*)
+            PKG_MANAGER="pacman"
+            PKG_UPDATE="sudo pacman -Sy"
+            PKG_INSTALL="sudo pacman -S --noconfirm --needed"
+            log "Distribución detectada: $DISTRO_ID (Arch-based, usando pacman)"
+            ;;
+        *debian*|*ubuntu*|*)
+            PKG_MANAGER="apt"
+            PKG_UPDATE="sudo apt-get update -qq"
+            PKG_INSTALL="sudo apt-get install -y -qq"
+            log "Distribución detectada: $DISTRO_ID (Debian-based, usando apt)"
+            ;;
+    esac
+}
+
+detect_distro
+
 # Verificar si se ejecuta como root
 if [ "$EUID" -ne 0 ]; then
     warn "Ejecutando con sudo..."
@@ -25,8 +56,12 @@ fi
 # ==========================================
 echo ""
 echo ">>> 1. Actualizando sistema..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common
+$PKG_UPDATE
+if [ "$PKG_MANAGER" = "pacman" ]; then
+    $PKG_INSTALL ca-certificates curl gnupg lsb-release
+else
+    $PKG_INSTALL ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common
+fi
 
 # ==========================================
 # 2. INSTALAR DOCKER
@@ -37,19 +72,28 @@ echo ">>> 2. Instalando Docker..."
 if command -v docker &> /dev/null; then
     log "Docker ya está instalado: $(docker --version)"
 else
-    # Agregar clave GPG de Docker
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    if [ "$PKG_MANAGER" = "pacman" ]; then
+        # En Arch/Garuda, Docker está en los repos oficiales
+        $PKG_INSTALL docker docker-compose docker-buildx
+    else
+        # Agregar clave GPG de Docker
+        sudo install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-    # Agregar repositorio
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-      sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        # Agregar repositorio
+        echo \
+          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+          $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+          sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        $PKG_UPDATE
+        $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    fi
+
+    # Habilitar e iniciar el servicio Docker
+    sudo systemctl enable docker
+    sudo systemctl start docker
 
     # Agregar usuario al grupo docker (evitar sudo)
     sudo usermod -aG docker $USER
@@ -96,8 +140,13 @@ echo ">>> 5. Instalando Node.js..."
 if command -v node &> /dev/null; then
     log "Node.js ya está instalado: $(node --version)"
 else
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo apt-get install -y -qq nodejs
+    if [ "$PKG_MANAGER" = "pacman" ]; then
+        # En Arch/Garuda, Node.js está en los repos oficiales
+        $PKG_INSTALL nodejs npm
+    else
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        $PKG_INSTALL nodejs
+    fi
     log "Node.js instalado: $(node --version)"
 fi
 
@@ -110,10 +159,15 @@ echo ">>> 6. Instalando Jenkins..."
 if command -v jenkins &> /dev/null; then
     log "Jenkins ya está instalado"
 else
-    curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-    echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
-    sudo apt-get update -qq
-    sudo apt-get install -y -qq jenkins
+    if [ "$PKG_MANAGER" = "pacman" ]; then
+        # En Arch/Garuda, Jenkins está en los repos oficiales
+        $PKG_INSTALL jenkins
+    else
+        curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+        $PKG_UPDATE
+        $PKG_INSTALL jenkins
+    fi
 
     # Habilitar e iniciar Jenkins
     sudo systemctl enable jenkins
@@ -182,6 +236,13 @@ else
     warn "Usuario jenkins no existe todavía; reejecuta este paso despues de instalar Jenkins"
 fi
 
+# Guardar ruta del repositorio para que Jenkins la detecte automáticamente
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sudo mkdir -p /var/lib/jenkins
+echo "$REPO_DIR" | sudo tee /var/lib/jenkins/repo-path > /dev/null
+sudo chown jenkins:jenkins /var/lib/jenkins/repo-path
+log "Ruta del repositorio guardada en /var/lib/jenkins/repo-path"
+
 # ==========================================
 # 8. INSTALAR GRAFANA Y PROMETHEUS
 # ==========================================
@@ -194,7 +255,11 @@ kubectl create namespace monitoring 2>/dev/null || true
 # Instalar Prometheus con helm (si no está disponible, instalar helm primero)
 if ! command -v helm &> /dev/null; then
     echo "Instalando Helm..."
-    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    if [ "$PKG_MANAGER" = "pacman" ]; then
+        $PKG_INSTALL helm
+    else
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    fi
 fi
 
 # Agregar repositorios de Helm
@@ -255,7 +320,7 @@ echo "=========================================="
 echo ""
 echo "Servicios disponibles:"
 echo ""
-echo "  Jenkins:        http://localhost:8080"
+echo "  Jenkins:        http://localhost:8090"
 echo "  Frontend:       http://localhost:8081 (despues del pipeline)"
 echo "  Backend API:    http://localhost:3000  (health: /health, version: /version, metricas: /metrics)"
 echo "  Grafana:        http://localhost:3001 (admin/admin, con port-forward)"
